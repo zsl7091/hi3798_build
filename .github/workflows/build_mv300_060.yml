@@ -7,7 +7,7 @@ on:
       set_chip_type:
         description: "Select Chip Type."
         required: false
-        default: "hi3798mv3dmf"
+        default: "hi3798mv3dmw"
         type: choice
         options:
           - hi3798mv3dmf
