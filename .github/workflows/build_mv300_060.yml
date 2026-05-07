@@ -16,22 +16,16 @@ on:
           - hi3798mv3dmm
           - hi3798mv3dml
           - hi3798mv3dma
-      set_arch_type:
-        description: "Select arch type."
-        required: false
-        default: "arm64"
-        type: choice
-        options:
-          - arm
-          - arm64
 
-# 必须添加这个权限声明，否则无法创建 Release
 permissions:
   contents: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      # 消除 Node.js 20 弃用警告，提前适配 Node.js 24
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
@@ -49,29 +43,39 @@ jobs:
       - name: make build
         id: build
         working-directory: /builder
-        # 修正：去掉 ${{ }}
         if: steps.init.outputs.status == 'success' && !cancelled()
         run: |
           git clone -q --single-branch --depth=1 https://github.com/zsl7091/HiSTBLinuxV100R005C00SPC060.git mv300
           cp ${GITHUB_WORKSPACE}/config_files/${{ inputs.set_chip_type }}_hi3798mv300_cfg.mak mv300/cfg.mak
           cd mv300
           source ./env.sh
+          
+          # 编译 Bootloader
           make hiboot
-          # 确保目标文件确实存在后再拷贝
-          cp /builder/mv300/out/hi3798mv300/${{ inputs.set_chip_type }}/image/emmc_image/fastboot.bin /builder/fastboot_${{ inputs.set_chip_type }}.bin
-          make linux -j2 2>&1  | tee -a buildlog.txt
-          echo "status=success" >> ${GITHUB_OUTPUT}
+          
+          # 【重要】取消注释，开始编译内核
+          # 如果编译依然失败，建议先用 -j1 方便查看具体的错误日志
+          make linux -j$(nproc)
+          
+          # 检查文件是否生成并拷贝
+          if [ -f /builder/mv300/out/hi3798mv300/${{ inputs.set_chip_type }}/image/emmc_image/hi_kernel.bin ]; then
+            cp /builder/mv300/out/hi3798mv300/${{ inputs.set_chip_type }}/image/emmc_image/fastboot.bin /builder/fastboot_${{ inputs.set_chip_type }}.bin
+            echo "status=success" >> ${GITHUB_OUTPUT}
+          else
+            echo "Error: hi_kernel.bin not found!"
+            exit 1
+          fi
           
       - name: Upload Kernel to Release
         id: tar
         uses: ncipollo/release-action@v1
-        # 修正：去掉 ${{ }}
         if: steps.build.outputs.status == 'success' && !cancelled()
         with:
           tag: mv300_kernel_060
-          # 建议 artifacts 路径如果报错，可以尝试去掉最前面的 / 
+          # 确保这两个文件在上面的步骤中都已成功生成
           artifacts: "/builder/fastboot_${{ inputs.set_chip_type }}.bin,/builder/mv300/out/hi3798mv300/${{ inputs.set_chip_type }}/image/emmc_image/hi_kernel.bin"
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
             - 海思3798Mv300内核 32位。
+            - 芯片型号: ${{ inputs.set_chip_type }}
